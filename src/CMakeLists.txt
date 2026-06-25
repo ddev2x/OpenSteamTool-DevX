@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(OpenSteamTool VERSION 1.0.0 LANGUAGES C CXX)
 
+# ==========================================
+# 针对 MSVC 编译器，强制其使用 UTF-8 读取源码，消除 C4819 警告
+# ==========================================
+if (MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
@@ -182,3 +189,14 @@ add_library(xinput1_4 SHARED
     xinput1_4/xinput1_4.cpp
     xinput1_4/xinput1_4.def
 )
+
+# ==========================================
+# 终极瘦身方案：强制剥离死代码
+# ==========================================
+if(MSVC AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    # 遍历三个 DLL
+    foreach(target_name OpenSteamTool dwmapi xinput1_4)
+        target_compile_options(${target_name} PRIVATE /O1 /Os /GL)
+        target_link_options(${target_name} PRIVATE /INCREMENTAL:NO /OPT:REF /OPT:ICF /LTCG)
+    endforeach()
+endif()
