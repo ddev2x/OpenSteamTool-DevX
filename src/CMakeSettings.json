@@ -22,7 +22,13 @@
       "ctestCommandArgs": "",
       "cmakeToolchain": "D:/data/vcpkg/scripts/buildsystems/vcpkg.cmake",
       "inheritEnvironments": [ "msvc_x64_x64" ],
-      "variables": []
+      "variables": [
+        {
+          "name": "OPENSTEAMTOOL_VERSION",
+          "value": "1.0.1",
+          "type": "STRING"
+        }
+      ]
     }
   ]
 }

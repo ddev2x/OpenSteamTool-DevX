@@ -14,12 +14,12 @@ namespace RemoteToml {
 
 namespace {
     constexpr const char* kGithubTemplate =
-        "https://raw.githubusercontent.com/hatott/steam-monitor-DevX/"
+        "https://raw.githubusercontent.com/ddev2x/steam-monitor-DevX/"
         "{channel}/{component}/{sha256}.toml";
 
 
     constexpr const char* kJsdelivrTemplate =
-        "https://cdn.jsdelivr.net/gh/hatott/steam-monitor-DevX@"
+        "https://cdn.jsdelivr.net/gh/ddev2x/steam-monitor-DevX@"
         "{channel}/{component}/{sha256}.toml";
 
     static bool HasPlaceholder(std::string_view text, std::string_view placeholder)
