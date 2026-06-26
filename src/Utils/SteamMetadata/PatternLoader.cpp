@@ -148,19 +148,12 @@ static void ShowDownloadFailedPopup(const std::string& dllName,
                                     const std::string& sha256,
                                     const std::string& component)
 {
-    SteamDiagnostics::ShowWarning(
-        "OpenSteamTool - Unsupported Steam Version",
-        "OpenSteamTool: signature file not found for " + dllName + ".\n\n"
-        "Hooks that depend on " + dllName + " are disabled for this session; "
-        "other modules are unaffected.\n\n"
-        "You can:\n"
-        "  1. Wait for the next signature update, then restart Steam.\n"
-        "  2. Drop a matching TOML at:\n"
-        "       <Steam>\\opensteamtool\\pattern\\" + component + "\\" + sha256 + ".toml\n"
-        "  3. Check upstream:\n"
-        "       https://github.com/OpenSteam001/steam-monitor/tree/pattern/" + component + "\n"
-        "  4. Report the diagnostics below:\n"
-        "       https://github.com/OpenSteam001/OpenSteamTool/issues");
+    std::string title = "ost-devx - 不支持的 Steam 版本";
+    std::string msg = "ost-devx: 未找到适配的文件 " + dllName + " 其他模块不受影响。\n\n"
+        "你可以做的: \n"
+        "  1. 等待适配更新，然后重启 Steam。\n"
+        "  2. 回退至指定Steam版本。\n";
+    SteamDiagnostics::ShowWarning(title, msg);
 }
 
 } // namespace

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(OpenSteamTool VERSION 1.0.0 LANGUAGES C CXX)
+project(OpenSteamTool VERSION 1.0.1 LANGUAGES C CXX)
 
 # ==========================================
 # 针对 MSVC 编译器，强制其使用 UTF-8 读取源码，消除 C4819 警告

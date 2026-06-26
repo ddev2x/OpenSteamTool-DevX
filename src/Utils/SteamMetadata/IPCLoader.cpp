@@ -138,17 +138,12 @@ namespace {
 
     static void ShowMissingPopup(const std::string& sha256)
     {
-        SteamDiagnostics::ShowWarning(
-            "OpenSteamTool - IPC spec missing",
-            "OpenSteamTool: IPC spec file not found.\n\n"
-            "IPC interception is disabled for this session; pattern-based "
-            "hooks are unaffected.\n\n"
-            "You can:\n"
-            "  1. Wait for the next upstream publish and restart Steam.\n"
-            "  2. Drop a matching TOML at:\n"
-            "       <Steam>\\opensteamtool\\ipc\\steamclient\\" + sha256 + ".toml\n"
-            "  3. Check upstream:\n"
-            "       https://github.com/OpenSteam001/steam-monitor/tree/ipc/steamclient");
+        std::string title = "ost-devx - 缺少 IPC 适配";
+        std::string msg = "ost-devx: 未找到 IPC 适配文件，其他模块不受影响。\n\n"
+            "你可以做的: \n"
+            "  1. 等待适配更新，然后重启 Steam。\n"
+            "  2. 回退至指定Steam版本。\n";
+        SteamDiagnostics::ShowWarning(title,msg);
     }
 
 } // namespace
