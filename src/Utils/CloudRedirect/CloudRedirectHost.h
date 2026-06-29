@@ -34,6 +34,12 @@ namespace CloudRedirectHost {
                         uint8_t* respBuf, uint32_t respMaxLen,
                         uint32_t* respLen, int32_t* eresult);
 
+    // Stats sync: notify CR that an added app started/stopped running.
+    void NotifyAppRunning(uint32_t appId, bool running);
+
+    // Stats sync: notify CR that stats were just stored for this app.
+    void NotifyStatsStored(uint32_t appId);
+
     // Teardown. Called from DLL_PROCESS_DETACH.
     void Shutdown();
 

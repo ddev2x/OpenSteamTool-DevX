@@ -24,18 +24,26 @@ namespace {
     using CR_AddApp_t   = void (*)(uint32_t appId);
     using CR_RemoveApp_t = void (*)(uint32_t appId);
     using CR_IsApp_t    = bool (*)(uint32_t appId);
-    using CR_SetApps_t  = void (*)(const uint32_t* appIds, uint32_t count);
-    using CR_Shutdown_t = void (*)();
+    using CR_SetApps_t          = void (*)(const uint32_t* appIds, uint32_t count);
+    using CR_Shutdown_t         = void (*)();
+    using CR_EnableStatsSync_t   = void (*)(bool, bool);
+    using CR_NotifyAppRunning_t  = void (*)(uint32_t, bool);
+    using CR_NotifyStatsStored_t = void (*)(uint32_t);
+    using CR_InstallVtableHooks_t = bool (*)();
 
     std::mutex        g_mutex;
     std::atomic<bool> g_active{false};
     OSTPlatform::DynamicLibrary::ModuleHandle g_module = nullptr;
 
-    CR_InitCloudSave_t  g_initCloudSave  = nullptr;
-    CR_HandleCloudRpc_t g_handleCloudRpc = nullptr;
-    CR_SetApps_t        g_setApps        = nullptr;
-    CR_IsApp_t          g_isApp          = nullptr;
-    CR_Shutdown_t       g_shutdownFn     = nullptr;
+    CR_InitCloudSave_t     g_initCloudSave     = nullptr;
+    CR_HandleCloudRpc_t    g_handleCloudRpc    = nullptr;
+    CR_SetApps_t           g_setApps           = nullptr;
+    CR_IsApp_t             g_isApp             = nullptr;
+    CR_Shutdown_t          g_shutdownFn        = nullptr;
+    CR_EnableStatsSync_t    g_enableStatsSync    = nullptr;
+    CR_NotifyAppRunning_t   g_notifyAppRunning   = nullptr;
+    CR_NotifyStatsStored_t  g_notifyStatsStored  = nullptr;
+    CR_InstallVtableHooks_t g_installVtableHooks = nullptr;
 
     // Routes CloudRedirect's notifications into OpenSteamTool's log instead of
     // popping a MessageBox from inside Steam.
@@ -112,6 +120,12 @@ void Initialize(const char* steamInstallPath) {
         return;
     }
 
+    // Optional exports (CR 2.2.5+)
+    ResolveSymbol(g_module, "CR_EnableStatsSync",    g_enableStatsSync);
+    ResolveSymbol(g_module, "CR_NotifyAppRunning",   g_notifyAppRunning);
+    ResolveSymbol(g_module, "CR_NotifyStatsStored",  g_notifyStatsStored);
+    ResolveSymbol(g_module, "CR_InstallVtableHooks", g_installVtableHooks);
+
     if (!g_initCloudSave(steamInstallPath, &CloudNotify)) {
         LOG_WARN("CloudRedirect: CR_InitCloudSave failed, disabling cloud save redirection");
         g_module = nullptr;
@@ -122,12 +136,26 @@ void Initialize(const char* steamInstallPath) {
     LOG_INFO("CloudRedirect: loaded {} and initialised cloud save redirection",
              libPath.string());
 
+    if (g_enableStatsSync) {
+        g_enableStatsSync(true, true);
+        LOG_INFO("CloudRedirect: stats sync API registered (gated by CR config)");
+    }
+
     // Push the current unlocked-app set without re-locking g_mutex.
     std::vector<AppId_t> depots = LuaConfig::GetAllDepotIds();
     std::vector<uint32_t> appIds(depots.begin(), depots.end());
     g_setApps(appIds.empty() ? nullptr : appIds.data(),
               static_cast<uint32_t>(appIds.size()));
     LOG_INFO("CloudRedirect: registered {} redirected app(s)", appIds.size());
+
+    // Vtable hooks let CR handle Cloud RPCs synchronously instead of queueing
+    // responses through the packet-layer path (which breaks slot4's 20s timeout).
+    if (g_installVtableHooks) {
+        if (g_installVtableHooks())
+            LOG_INFO("CloudRedirect: vtable hooks installed (Cloud RPCs handled at vtable level)");
+        else
+            LOG_WARN("CloudRedirect: CR_InstallVtableHooks failed — falling back to packet-layer path");
+    }
 }
 
 void SyncAppSet() {
@@ -156,6 +184,16 @@ bool HandleCloudRpc(const char* method, uint32_t appId, uint32_t accountId,
     if (!g_active.load(std::memory_order_acquire) || !g_handleCloudRpc) return false;
     return g_handleCloudRpc(method, appId, accountId, reqBody, reqLen,
                             respBuf, respMaxLen, respLen, eresult);
+}
+
+void NotifyAppRunning(uint32_t appId, bool running) {
+    if (!g_active.load(std::memory_order_acquire) || !g_notifyAppRunning) return;
+    g_notifyAppRunning(appId, running);
+}
+
+void NotifyStatsStored(uint32_t appId) {
+    if (!g_active.load(std::memory_order_acquire) || !g_notifyStatsStored) return;
+    g_notifyStatsStored(appId);
 }
 
 void Shutdown() {

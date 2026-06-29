@@ -766,7 +766,13 @@ namespace Hooks_NetPacket_RichPresence {
             newTracked = topmost;
 
         if (g_PlayingAppId == newTracked) return;
+        AppId_t oldTracked = g_PlayingAppId;
         g_PlayingAppId = newTracked;
+
+        if (oldTracked != 0)
+            CloudRedirectHost::NotifyAppRunning(oldTracked, false);
+        if (newTracked != 0)
+            CloudRedirectHost::NotifyAppRunning(newTracked, true);
 
         if (newTracked != 0) {
             LOG_RICHPRESENCE_INFO("Tracking topmost appid {}", newTracked);
@@ -1152,6 +1158,13 @@ namespace {
         case k_EMsgClientGetUserStats:               // 818
             g_NeedReplaceSend = Hooks_NetPacket_UserStats::HandleSend_ClientGetUserStats(pBody, cbBody);
             return;
+
+        case k_EMsgClientStoreUserStats2: {         // 5466
+            AppId_t appId = Hooks_NetPacket_RichPresence::g_PlayingAppId;
+            if (appId != 0)
+                CloudRedirectHost::NotifyStatsStored(appId);
+            return;
+        }
 
         default:
             return;
