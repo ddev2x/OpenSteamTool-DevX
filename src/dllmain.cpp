@@ -1,5 +1,6 @@
 #include "dllmain.h"
 #include "Hook/HookManager.h"
+#include "Hook/Hooks_Package.h"
 #include "Utils/Config/ConfigFileWatcher.h"
 #include "Utils/Config/LuaFileWatcher.h"
 #include "Utils/CloudRedirect/CloudRedirectHost.h"
@@ -81,6 +82,10 @@ static uint32_t InitThread(OSTPlatform::DynamicLibrary::ModuleHandle selfModule)
 
     // Surface any functions that FindPattern() could not locate.
     PatternLoader::ReportMissingFunctions();
+
+    // Proactively initialize the fake license to reduce game library load time.
+    // This runs in a background thread and polls until Steam's internal state is ready.
+    Hooks_Package::EagerInitialize();
 
     // Optional Steam Cloud save redirection (CloudRedirect). No-op unless
     // [cloud].enabled is set and cloud_redirect.dll is present.

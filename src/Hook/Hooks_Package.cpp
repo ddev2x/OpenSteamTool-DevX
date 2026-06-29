@@ -1,6 +1,9 @@
 #include "Hooks_Package.h"
 #include "HookMacros.h"
 #include "Hooks_SteamUI.h"
+
+#include <thread>
+#include <chrono>
 #include "dllmain.h"
 #include "Utils/HookSupport/VehCommon.h"
 #include <unordered_set>
@@ -132,6 +135,28 @@ namespace Hooks_Package {
         UNHOOK_BEGIN();
         UNINSTALL_HOOK_C(CheckAppOwnership);
         UNHOOK_END();
+    }
+
+    void EagerInitialize() {
+        // Proactively initialize the fake license in a background thread
+        // to avoid blocking the main init thread, but ensure it happens
+        // before Steam UI queries the library for the first time.
+        std::thread([]() {
+            // Give Steam a moment to finish its own initialization
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+            // Poll until the necessary captures are ready
+            const int maxRetries = 20;  // 10 seconds total
+            for (int i = 0; i < maxRetries; ++i) {
+                if (TryInitFakeLicenseOnce()) {
+                    LOG_PACKAGE_INFO("EagerInitialize: fake license initialized successfully");
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            }
+
+            LOG_PACKAGE_WARN("EagerInitialize: failed to initialize fake license after {} retries", maxRetries);
+        }).detach();
     }
 
     void NotifyLicenseChanged() {
