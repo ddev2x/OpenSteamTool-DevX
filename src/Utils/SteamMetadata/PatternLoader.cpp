@@ -151,7 +151,7 @@ static void ShowDownloadFailedPopup(const std::string& dllName,
     std::string title = "ost-devx - 不支持的 Steam 版本";
     std::string msg = "ost-devx: 未找到适配的文件 " + dllName + " 其他模块不受影响。\n\n"
         "你可以做的: \n"
-        "  1. 等待适配更新，然后重启 Steam。\n"
+        "  1. 等待适配更新（1-2天），然后重启 Steam。\n"
         "  2. 回退至指定Steam版本。\n";
     SteamDiagnostics::ShowWarning(title, msg);
 }

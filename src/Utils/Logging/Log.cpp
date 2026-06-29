@@ -4,6 +4,7 @@
 
 #include "OSTPlatform/include/DynamicLibrary.h"
 #include "OSTPlatform/include/Log.h"
+#include "OSTPlatform/include/Path.h"
 #include "Utils/Config/Config.h"
 #include <atomic>
 #include <filesystem>
@@ -78,13 +79,23 @@ namespace Log {
         if (!g_mainReady.compare_exchange_strong(expected, true)) return;
 
         try {
-            auto dir = OSTPlatform::DynamicLibrary::GetModuleDirectory(selfModule);
-            if (dir.empty()) dir = ".";
-            auto logDir = (dir / "opensteamtool").string();
-            std::filesystem::create_directories(logDir);
-            Main = MakeLogger(logDir, "main");
+            std::filesystem::path logDir;
+
+            // Try to use %LOCALAPPDATA%\ost-ddev2x\logs
+            if (auto appDataDir = OSTPlatform::Path::GetOrCreateLocalAppDataSubdir("ost-ddev2x")) {
+                logDir = *appDataDir / "logs";
+                std::filesystem::create_directories(logDir);
+            } else {
+                // Fallback to module directory
+                auto dir = OSTPlatform::DynamicLibrary::GetModuleDirectory(selfModule);
+                if (dir.empty()) dir = ".";
+                logDir = dir / "ost-ddev2x";
+                std::filesystem::create_directories(logDir);
+            }
+
+            Main = MakeLogger(logDir.string(), "main");
             Main->set_level(spdlog::level::trace);  // early boot: log everything
-            LOG_INFO("Log initialised at {}", logDir);
+            LOG_INFO("Log initialised at {}", logDir.string());
         } catch (const std::exception&) {
             g_mainReady.store(false);
         }

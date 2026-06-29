@@ -141,7 +141,7 @@ namespace {
         std::string title = "ost-devx - 缺少 IPC 适配";
         std::string msg = "ost-devx: 未找到 IPC 适配文件，其他模块不受影响。\n\n"
             "你可以做的: \n"
-            "  1. 等待适配更新，然后重启 Steam。\n"
+            "  1. 等待适配更新（1-2天），然后重启 Steam。\n"
             "  2. 回退至指定Steam版本。\n";
         SteamDiagnostics::ShowWarning(title,msg);
     }

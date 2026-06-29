@@ -1,4 +1,5 @@
 #include "Config.h"
+#include "OSTPlatform/include/Path.h"
 #include "Utils/Logging/Log.h"
 #include "Utils/SteamMetadata/ManifestClient.h"
 
@@ -38,8 +39,16 @@ namespace {
 
     Snapshot MakeDefaultSnapshot(const std::string& configPath) {
         Snapshot snapshot;
-        std::filesystem::path p(configPath);
-        snapshot.logDir = (p.parent_path() / "opensteamtool").string();
+
+        // Use %LOCALAPPDATA%\ost-ddev2x\logs for default log directory
+        if (auto appDataDir = OSTPlatform::Path::GetOrCreateLocalAppDataSubdir("ost-ddev2x")) {
+            snapshot.logDir = (*appDataDir / "logs").string();
+        } else {
+            // Fallback to Steam directory
+            std::filesystem::path p(configPath);
+            snapshot.logDir = (p.parent_path() / "ost-ddev2x").string();
+        }
+
         return snapshot;
     }
 

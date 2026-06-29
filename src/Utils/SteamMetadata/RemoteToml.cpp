@@ -1,5 +1,6 @@
 #include "RemoteToml.h"
 #include "OSTPlatform/include/Http.h"
+#include "OSTPlatform/include/Path.h"
 #include "Utils/Config/Config.h"
 #include "Utils/Logging/Log.h"
 #include "Utils/SteamMetadata/SteamDiagnostics.h"
@@ -71,6 +72,8 @@ namespace {
     }
 } // namespace
 
+
+
 Result Fetch(const Request& request)
 {
     namespace fs = std::filesystem;
@@ -90,9 +93,18 @@ Result Fetch(const Request& request)
     LOG_INFO("RemoteToml({}/{}): sha256 = {} ({} ms)",
              request.channel, request.component, out.sha256, hashMs);
 
-    // 2. Cache path & dir.
-    fs::path steamRoot = fs::path(request.dllPath).parent_path();
-    fs::path cacheDir  = steamRoot / "opensteamtool" / request.channel / request.component;
+    // 2. Cache path & dir - use user's AppData\Local\ost-ddev2x
+    fs::path cacheRoot;
+    if (auto appDataDir = OSTPlatform::Path::GetOrCreateLocalAppDataSubdir("ost-ddev2x")) {
+        cacheRoot = *appDataDir;
+    } else {
+        // Fallback to Steam directory if AppData not available
+        LOG_WARN("RemoteToml({}/{}): could not access LocalAppData, falling back to Steam directory",
+                 request.channel, request.component);
+        cacheRoot = fs::path(request.dllPath).parent_path() / "ost-ddev2x";
+    }
+
+    fs::path cacheDir  = cacheRoot / request.channel / request.component;
     fs::path cachePath = cacheDir / (out.sha256 + ".toml");
     const std::string cachePathText = cachePath.string();
 
