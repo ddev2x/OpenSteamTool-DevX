@@ -46,12 +46,19 @@ namespace {
         }
     }
 
+    static std::string ResolveChannel(std::string_view channel)
+    {
+        if (channel == "pattern") return "pattern-dev";
+        if (channel == "ipc") return "ipc-dev";
+        return std::string(channel);
+    }
+
     static std::string ExpandTemplate(std::string urlTemplate,
                                       const Request& request,
                                       std::string_view sha256)
     {
-        ReplaceAll(urlTemplate, "{channel}", request.channel);
-        ReplaceAll(urlTemplate, "{component}", request.component);
+        ReplaceAll(urlTemplate, "{channel}", ResolveChannel(request.channel));
+        ReplaceAll(urlTemplate, "{component}", ResolveChannel(request.component));
         ReplaceAll(urlTemplate, "{sha256}", sha256);
         return urlTemplate;
     }
@@ -101,7 +108,7 @@ Result Fetch(const Request& request)
         // Fallback to Steam directory if AppData not available
         LOG_WARN("RemoteToml({}/{}): could not access LocalAppData, falling back to Steam directory",
                  request.channel, request.component);
-        cacheRoot = fs::path(request.dllPath).parent_path() / "ost-ddev2x";
+        cacheRoot = fs::path(request.dllPath).parent_path() / "ost-ddev2x"; 
     }
 
     fs::path cacheDir  = cacheRoot / request.channel / request.component;
