@@ -15,7 +15,8 @@ namespace RemoteToml {
 
 namespace {
     constexpr const char* kGithubTemplate =
-        "https://raw.githubusercontent.com/ddev2x/steam-monitor-DevX/"
+        // "https://raw.githubusercontent.com/ddev2x/steam-monitor-DevX/"
+        "https://raw.gitcode.com/hatott88/ost-devx/raw/"
         "{channel}/{component}/{sha256}.toml";
 
 
