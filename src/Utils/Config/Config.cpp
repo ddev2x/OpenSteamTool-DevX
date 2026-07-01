@@ -95,7 +95,7 @@ namespace {
             InjectDll defaultDll;
             // bare name resolves next to steam.exe
             std::filesystem::path steamDir = std::filesystem::path(configPath).parent_path();
-            std::filesystem::path defaultPath = "OnlineFix.dll";
+            std::filesystem::path defaultPath = "onlinefix-ddev2x.dll";
             defaultDll.path = (steamDir / defaultPath).string();
 
             // optional: require this substring in the launch command (default: any)
