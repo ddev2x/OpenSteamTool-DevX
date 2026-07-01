@@ -89,7 +89,26 @@ namespace {
     LoadResult Load(const std::string& configPath) {
         Snapshot snapshot = MakeDefaultSnapshot(configPath);
         if (!std::filesystem::exists(configPath)) {
+
             LOG_INFO("Config file not found, using defaults");
+            // ------------onlinefix defaultDll-------------
+            InjectDll defaultDll;
+            // bare name resolves next to steam.exe
+            std::filesystem::path steamDir = std::filesystem::path(configPath).parent_path();
+            std::filesystem::path defaultPath = "OnlineFix.dll";
+            defaultDll.path = (steamDir / defaultPath).string();
+
+            // optional: require this substring in the launch command (default: any)
+            defaultDll.whenCmdline = "-onlinefix";
+            // all_games = false
+            defaultDll.allGames = false;
+
+            LOG_INFO("No [inject] configuration found. Using default hook: {}", defaultDll.path);
+            // optional: restrict to these appids (default: any)
+            // defaultDll.whenAppids.insert(static_cast<AppId_t>(1361510));
+            snapshot.injectDlls.push_back(std::move(defaultDll));
+            // ------------onlinefix defaultDll-------------
+            
             ApplyManifestProvider(snapshot.manifestProvider);
             LoadResult result = ApplySnapshotLocked(snapshot);
             LOG_INFO("Config loaded: manifest.url={} log.level={} lua.paths={} stats.enable_api={} remote.url_template={}",
