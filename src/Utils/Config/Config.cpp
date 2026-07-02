@@ -112,11 +112,11 @@ namespace {
             ApplyManifestProvider(snapshot.manifestProvider);
             LoadResult result = ApplySnapshotLocked(snapshot);
             LOG_INFO("Config loaded: manifest.url={} log.level={} lua.paths={} stats.enable_api={} remote.url_template={}",
-                     ManifestClient::ActiveProviderName(),
-                     ToString(GetLogLevel()),
-                     (uint32_t)GetLuaPaths().size(),
-                     GetStatsEnableApi(),
-                     GetRemoteUrlTemplate().empty() ? "<default>" : GetRemoteUrlTemplate());
+                ManifestClient::ActiveProviderName(),
+                ToString(GetLogLevel()),
+                (uint32_t)GetLuaPaths().size(),
+                GetStatsEnableApi(),
+                GetRemoteUrlTemplate().empty() ? "<default>" : GetRemoteUrlTemplate());
             return result;
         }
 

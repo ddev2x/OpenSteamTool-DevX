@@ -110,17 +110,13 @@ namespace {
             RequestEncryptedAppTicketReq req{pRead};
             std::span<const uint8_t> nonce;
             if (req.ok()) nonce = req.pData();
-            // Whatever account the registry's current static ticket already
-            // belongs to (0 if none) — lets the backend pin the mint to that
-            // SAME account instead of risking a different pool pick.
-            const uint64_t existingSteamId = AppTicket::ExtractSteamIdFromTicketBytes(
-                AppTicket::GetAppOwnershipTicketFromCredentialStore(appId));
+            
             // Only mint on-demand etickets for games explicitly marked forcedenuvo —
             // those are the strict Denuvo titles that require a nonce-bound ticket.
             // For normally-detected Denuvo games the minted ticket carries the wrong
             // SteamID (pool account vs spoofed user) and Denuvo rejects it (error 54).
             if (LuaConfig::IsForcedDenuvo(appId)) {
-                if (auto fresh = EticketClient::FetchFreshEticket(appId, nonce, existingSteamId)) {
+                if (auto fresh = EticketClient::FetchFreshEticket(appId, nonce)) {
                     std::lock_guard<std::mutex> lock(g_freshEticketMutex);
                     g_freshEticket[appId] = std::move(*fresh);
                 }
