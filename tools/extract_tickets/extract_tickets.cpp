@@ -2,8 +2,10 @@
 
 #include <cctype>
 #include <cstdint>
-#include <fstream>
-#include <iostream>
+#include <sstream>
+#include <memory>
+#include <stdexcept>
+#include "extract_tickets.h"
 #include <optional>
 #include <string>
 #include <string_view>
@@ -13,37 +15,20 @@
 
 namespace {
 
-bool IsDecimal(std::string_view value) {
-    if (value.empty()) return false;
-    for (char ch : value) {
-        if (!std::isdigit(static_cast<unsigned char>(ch))) return false;
-    }
-    return true;
-}
-
-std::optional<uint32_t> ParseAppId(const std::string& value) {
-    if (!IsDecimal(value)) return std::nullopt;
-
-    unsigned long parsed{0};
-    try {
-        size_t consumed{0};
-        parsed = std::stoul(value, &consumed, 10);
-        if (consumed != value.size() || parsed > 0xFFFFFFFFul) return std::nullopt;
-    } catch (...) {
-        return std::nullopt;
-    }
-
-    return static_cast<uint32_t>(parsed);
-}
-
-std::optional<uint32_t> ReadAppIdFromConsole() {
-    std::cout << "AppID: ";
-
-    std::string input;
-    if (!std::getline(std::cin, input)) return std::nullopt;
-    return ParseAppId(input);
-}
-
+// Only a trivial pointer is thread-local. The stream is owned by each call.
+thread_local std::ostringstream* errorStream = nullptr;
+#define errors (*errorStream)
+thread_local const char* lastStage = "Idle";
+SRWLOCK extractionMutex = SRWLOCK_INIT;
+struct ExtractionLock {
+    ExtractionLock() { AcquireSRWLockExclusive(&extractionMutex); }
+    ~ExtractionLock() { ReleaseSRWLockExclusive(&extractionMutex); }
+};
+struct ErrorScope {
+    std::ostringstream stream;
+    ErrorScope() { errorStream = &stream; }
+    ~ErrorScope() { errorStream = nullptr; }
+};
 std::optional<std::string> QueryRegistryString(HKEY root, const char* subKey, const char* valueName) {
     HKEY key{nullptr};
     if (RegOpenKeyExA(root, subKey, 0, KEY_READ | KEY_WOW64_32KEY, &key) != ERROR_SUCCESS) {
@@ -77,7 +62,7 @@ std::optional<std::string> FindSteamInstallPath() {
     constexpr const char* kSteamKey{"Software\\Valve\\Steam"};
 
     if (auto path{QueryRegistryString(HKEY_CURRENT_USER, kSteamKey, "SteamPath")}) {
-        std::cout << "Found SteamPath in HKEY_CURRENT_USER: " << *path << "\n";
+
         return path;
     }
 
@@ -104,7 +89,7 @@ std::string NormalizeDir(std::string dir) {
 HMODULE LoadSteamClient64(std::string& loadedPath) {
     auto steamPath{FindSteamInstallPath()};
     if (!steamPath) {
-        std::cerr << "Failed to find Steam install path in registry.\n";
+        errors << "Failed to find Steam install path in registry.\n";
         return nullptr;
     }
 
@@ -115,10 +100,11 @@ HMODULE LoadSteamClient64(std::string& loadedPath) {
     // directory. Add that directory to the search path and load with
     // LOAD_WITH_ALTERED_SEARCH_PATH so those dependencies resolve; otherwise the
     // load fails with ERROR_MOD_NOT_FOUND (126).
-    SetDllDirectoryA(steamDir.c_str());
+
+    lastStage = "LoadLibraryExA(steamclient64.dll)";
     HMODULE module{LoadLibraryExA(loadedPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH)};
     if (!module) {
-        std::cerr << "Failed to load " << loadedPath << " (GetLastError=" << GetLastError() << ").\n";
+        errors << "Failed to load " << loadedPath << " (GetLastError=" << GetLastError() << ").\n";
         return nullptr;
     }
 
@@ -128,14 +114,15 @@ HMODULE LoadSteamClient64(std::string& loadedPath) {
 ISteamClient* CreateSteamClient(HMODULE module) {
     auto createInterface{reinterpret_cast<CreateInterfaceFn>(GetProcAddress(module, "CreateInterface"))};
     if (!createInterface) {
-        std::cerr << "steamclient64.dll has no CreateInterface export.\n";
+        errors << "steamclient64.dll has no CreateInterface export.\n";
         return nullptr;
     }
 
+    lastStage = "CreateInterface(SteamClient023)";
     int returnCode{0};
     auto* client{reinterpret_cast<ISteamClient*>(createInterface(kSteamClientInterfaceVersion, &returnCode))};
     if (!client) {
-        std::cerr << "CreateInterface(" << kSteamClientInterfaceVersion
+        errors << "CreateInterface(" << kSteamClientInterfaceVersion
                   << ") failed (returnCode=" << returnCode << ").\n";
         return nullptr;
     }
@@ -144,15 +131,17 @@ ISteamClient* CreateSteamClient(HMODULE module) {
 
 // Open a pipe and attach to the already-running global user
 bool OpenSession(ISteamClient* client, HSteamPipe& pipe, HSteamUser& user) {
+    lastStage = "CreateSteamPipe";
     pipe = client->CreateSteamPipe();
     if (!pipe) {
-        std::cerr << "CreateSteamPipe failed. Is Steam running?\n";
+        errors << "CreateSteamPipe failed. Is Steam running?\n";
         return false;
     }
 
+    lastStage = "ConnectToGlobalUser";
     user = client->ConnectToGlobalUser(pipe);
     if (!user) {
-        std::cerr << "ConnectToGlobalUser failed. Is a user logged in?\n";
+        errors << "ConnectToGlobalUser failed. Is a user logged in?\n";
         client->BReleaseSteamPipe(pipe);
         pipe = 0;
         return false;
@@ -165,10 +154,11 @@ bool OpenSession(ISteamClient* client, HSteamPipe& pipe, HSteamUser& user) {
 // offsets into it. nAppID is explicit, so this works for any owned app.
 std::optional<std::vector<uint8_t>> ExtractAppOwnershipTicket(
     ISteamClient* client, HSteamPipe pipe, HSteamUser user, uint32_t appId) {
+    lastStage = "GetISteamGenericInterface(AppTicket)";
     auto* appTicket{reinterpret_cast<ISteamAppTicket*>(
         client->GetISteamGenericInterface(user, pipe, kSteamAppTicketInterfaceVersion))};
     if (!appTicket) {
-        std::cerr << "GetISteamGenericInterface(" << kSteamAppTicketInterfaceVersion
+        errors << "GetISteamGenericInterface(" << kSteamAppTicketInterfaceVersion
                   << ") returned null.\n";
         return std::nullopt;
     }
@@ -178,6 +168,7 @@ std::optional<std::vector<uint8_t>> ExtractAppOwnershipTicket(
     uint32_t steamIdOffset{0};
     uint32_t signatureOffset{0};
     uint32_t signatureSize{0};
+    lastStage = "GetAppOwnershipTicketData";
     const uint32_t written{appTicket->GetAppOwnershipTicketData(
         appId,
         buffer.data(),
@@ -188,17 +179,13 @@ std::optional<std::vector<uint8_t>> ExtractAppOwnershipTicket(
         &signatureSize)};
 
     if (written == 0 || written > buffer.size()) {
-        std::cerr << "GetAppOwnershipTicketData returned no ticket for AppID " << appId
+        errors << "GetAppOwnershipTicketData returned no ticket for AppID " << appId
                   << " (own the app and have it cached locally?).\n";
         return std::nullopt;
     }
 
     buffer.resize(written);
-    std::cout << "Ownership ticket " << written << " bytes"
-              << " (appIdOffset=" << appIdOffset
-              << " steamIdOffset=" << steamIdOffset
-              << " signatureOffset=" << signatureOffset
-              << " signatureSize=" << signatureSize << ")\n";
+
     return buffer;
 }
 
@@ -208,16 +195,24 @@ std::optional<std::vector<uint8_t>> ExtractAppOwnershipTicket(
 // See https://partner.steamgames.com/doc/api/ISteamUser#RequestEncryptedAppTicket
 std::optional<std::vector<uint8_t>> ExtractEncryptedAppTicket(
     ISteamClient* client, HSteamPipe pipe, HSteamUser user, uint32_t appId) {
+    lastStage = "GetISteamUtils(encrypted)";
     auto* utils{client->GetISteamUtils(pipe, kSteamUtilsInterfaceVersion)};
+    lastStage = "GetISteamUser";
     auto* steamUser{client->GetISteamUser(user, pipe, kSteamUserInterfaceVersion)};
     if (!utils || !steamUser) {
-        std::cerr << "GetISteamUtils/GetISteamUser returned null.\n";
+        errors << "GetISteamUtils/GetISteamUser returned null.\n";
         return std::nullopt;
     }
 
+    lastStage = "BLoggedOn";
+    if (!steamUser->BLoggedOn()) {
+        errors << "Steam user is not logged on.";
+        return std::nullopt;
+    }
+    lastStage = "RequestEncryptedAppTicket";
     const SteamAPICall_t hCall{steamUser->RequestEncryptedAppTicket(nullptr, 0)};
     if (!hCall) {
-        std::cerr << "RequestEncryptedAppTicket failed to start for AppID " << appId << ".\n";
+        errors << "RequestEncryptedAppTicket failed to start for AppID " << appId << ".\n";
         return std::nullopt;
     }
 
@@ -226,9 +221,10 @@ std::optional<std::vector<uint8_t>> ExtractEncryptedAppTicket(
     constexpr int kStepMs{50};
     bool failed{false};
     int waited{0};
+    lastStage = "IsAPICallCompleted";
     while (!utils->IsAPICallCompleted(hCall, &failed)) {
         if (waited >= kMaxWaitMs) {
-            std::cerr << "Timed out waiting for EncryptedAppTicketResponse_t.\n";
+            errors << "Timed out waiting for EncryptedAppTicketResponse_t.\n";
             return std::nullopt;
         }
         Sleep(kStepMs);
@@ -236,6 +232,7 @@ std::optional<std::vector<uint8_t>> ExtractEncryptedAppTicket(
     }
 
     EncryptedAppTicketResponse_t response{};
+    lastStage = "GetAPICallResult";
     const bool gotResult{utils->GetAPICallResult(
         hCall,
         &response,
@@ -243,211 +240,109 @@ std::optional<std::vector<uint8_t>> ExtractEncryptedAppTicket(
         EncryptedAppTicketResponse_t::k_iCallback,
         &failed)};
     if (!gotResult || failed) {
-        std::cerr << "GetAPICallResult failed for EncryptedAppTicketResponse_t.\n";
+        errors << "GetAPICallResult failed for EncryptedAppTicketResponse_t.\n";
         return std::nullopt;
     }
     if (response.m_eResult != k_EResultOK) {
-        std::cerr << "RequestEncryptedAppTicket returned EResult "
+        errors << "RequestEncryptedAppTicket returned EResult "
                   << static_cast<int>(response.m_eResult) << ".\n";
         return std::nullopt;
     }
 
-    // Pass a null buffer first to learn the size, then fetch.
+    // The API requires a real destination; NULL is not a supported size query.
     uint32_t cbTicket{0};
-    steamUser->GetEncryptedAppTicket(nullptr, 0, &cbTicket);
-    if (cbTicket == 0) {
-        std::cerr << "Encrypted app ticket is empty.\n";
-        return std::nullopt;
-    }
-
-    std::vector<uint8_t> buffer(cbTicket);
+    std::vector<uint8_t> buffer(65536);
+    lastStage = "GetEncryptedAppTicket";
     if (!steamUser->GetEncryptedAppTicket(buffer.data(), static_cast<int>(buffer.size()), &cbTicket)) {
-        std::cerr << "GetEncryptedAppTicket failed.\n";
+        errors << "GetEncryptedAppTicket failed.\n";
         return std::nullopt;
     }
 
+    if (cbTicket == 0 || cbTicket > buffer.size()) { errors << "Invalid ticket length."; return std::nullopt; }
     buffer.resize(cbTicket);
-    std::cout << "Encrypted ticket " << cbTicket << " bytes\n";
+
     return buffer;
 }
 
-// Dump the raw ticket bytes as a classic hex view: offset, 16 hex bytes, ASCII.
-void PrintHex(const char* label, const std::vector<uint8_t>& data) {
-    std::cout << label << " (" << data.size() << " bytes):\n";
 
-    constexpr size_t kBytesPerRow{16};
-    static const char kHex[]{"0123456789abcdef"};
-
-    for (size_t row{0}; row < data.size(); row += kBytesPerRow) {
-        // Offset column.
-        std::string line;
-        for (int shift{12}; shift >= 0; shift -= 4) {
-            line += kHex[(row >> shift) & 0xF];
-        }
-        line += "  ";
-
-        // Hex column.
-        std::string ascii;
-        for (size_t col{0}; col < kBytesPerRow; ++col) {
-            if (row + col < data.size()) {
-                const uint8_t byte{data[row + col]};
-                line += kHex[byte >> 4];
-                line += kHex[byte & 0xF];
-                line += ' ';
-                ascii += (byte >= 0x20 && byte < 0x7F) ? static_cast<char>(byte) : '.';
-            } else {
-                line += "   ";
-            }
-            if (col == 7) line += ' ';
-        }
-
-        std::cout << line << " " << ascii << "\n";
-    }
-}
-
-std::string ToHexString(const std::vector<uint8_t>& data) {
-    static const char kHex[]{"0123456789abcdef"};
+struct Storage { TicketsResult result{}; std::string app, encrypted, error; };
+std::string Hex(const std::optional<std::vector<uint8_t>>& bytes) {
     std::string out;
-    out.reserve(data.size() * 2);
-    for (uint8_t byte : data) {
-        out += kHex[byte >> 4];
-        out += kHex[byte & 0xF];
+    if (bytes) for (auto b : *bytes) {
+        out += "0123456789abcdef"[b >> 4]; out += "0123456789abcdef"[b & 15];
     }
     return out;
 }
-
-bool WriteBinaryFile(const std::string& path, const std::vector<uint8_t>& data) {
-    std::ofstream output{path, std::ios::binary | std::ios::trunc};
-    if (!output) {
-        std::cerr << "Failed to create " << path << ".\n";
-        return false;
+struct Session {
+    HMODULE module{}; ISteamClient* client{}; HSteamPipe pipe{}; HSteamUser user{};
+    ~Session() {
+        if (client && user) { lastStage = "ReleaseUser"; client->ReleaseUser(pipe, user); }
+        if (client && pipe) { lastStage = "BReleaseSteamPipe"; client->BReleaseSteamPipe(pipe); }
+        if (module) { lastStage = "FreeLibrary(steamclient64.dll)"; FreeLibrary(module); }
     }
-    output.write(reinterpret_cast<const char*>(data.data()),
-                 static_cast<std::streamsize>(data.size()));
-    if (!output) {
-        std::cerr << "Failed to write " << path << ".\n";
-        return false;
-    }
-    return true;
-}
-
-// Build the plain-text summary line for one ticket. Present -> the hex string,
-// absent -> "null".
-std::string TicketLine(const char* name, const std::optional<std::vector<uint8_t>>& ticket) {
-    if (!ticket) return std::string{name} + ":null\n";
-    return std::string{name} + "(" + std::to_string(ticket->size()) + "bytes):"
-           + ToHexString(*ticket) + "\n";
-}
-
-// Everything lands in a single <appid> folder: the raw binary tickets
-// (only when present) plus a plain-text summary file.
-bool WriteOutputs(uint32_t appId,
-                  const std::optional<std::vector<uint8_t>>& ownership,
-                  const std::optional<std::vector<uint8_t>>& encrypted) {
-    const std::string dir{std::to_string(appId)};
-    if (!CreateDirectoryA(dir.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
-        std::cerr << "Failed to create directory " << dir
-                  << " (GetLastError=" << GetLastError() << ").\n";
-        return false;
-    }
-
-    bool ok{true};
-    if (ownership) ok = WriteBinaryFile(JoinPath(dir, "appticket.bin"), *ownership) && ok;
-    if (encrypted) ok = WriteBinaryFile(JoinPath(dir, "eticket.bin"), *encrypted) && ok;
-
-    const std::string text{
-        "appid:" + std::to_string(appId) + "\n"
-        + TicketLine("appticket", ownership)
-        + TicketLine("eticket", encrypted)};
-
-    const std::string textPath{JoinPath(dir, "tickets.txt")};
-    std::ofstream summary{textPath, std::ios::trunc};
-    if (!summary || !(summary << text)) {
-        std::cerr << "Failed to write " << textPath << ".\n";
-        return false;
-    }
-
-    std::cout << "Wrote " << dir << "\\\n";
-    return ok;
-}
-
-void WaitForExit() {
-    std::cout << "\nPress Enter to exit...";
-    std::string dummy;
-    std::getline(std::cin, dummy);
-}
-
-#if defined(_WIN64)
-int Run(int argc, char** argv) {
-    std::optional<uint32_t> appId;
-    if (argc >= 2) {
-        appId = ParseAppId(argv[1]);
-        if (!appId) {
-            std::cerr << "Invalid AppID: " << argv[1] << "\n";
-            return 1;
-        }
-    } else {
-        appId = ReadAppIdFromConsole();
-        if (!appId) {
-            std::cerr << "Invalid AppID.\n";
-            return 1;
+};
+struct Environment {
+    const char* name; std::optional<std::string> old;
+    explicit Environment(const char* key) : name(key) {
+        DWORD n = GetEnvironmentVariableA(name, nullptr, 0);
+        if (n) {
+            std::string value(n, '\0');
+            GetEnvironmentVariableA(name, value.data(), n);
+            value.resize(n - 1); old = std::move(value);
         }
     }
-
-    // Run in the target app's context so GetAppID and RequestEncryptedAppTicket
-    // resolve to this AppID. Must be set before steamclient64.dll initializes.
-    const std::string appIdStr{std::to_string(*appId)};
-    SetEnvironmentVariableA("SteamAppId", appIdStr.c_str());
-    SetEnvironmentVariableA("SteamGameId", appIdStr.c_str());
-
-    std::string steamClientPath;
-    HMODULE steamClient{LoadSteamClient64(steamClientPath)};
-    if (!steamClient) return 1;
-
-    std::cout << "Loaded " << steamClientPath << "\n";
-
-    ISteamClient* client{CreateSteamClient(steamClient)};
-    if (!client) {
-        FreeLibrary(steamClient);
-        return 1;
-    }
-
-    HSteamPipe pipe{0};
-    HSteamUser user{0};
-    if (!OpenSession(client, pipe, user)) {
-        FreeLibrary(steamClient);
-        return 1;
-    }
-
-    if (auto* utils{client->GetISteamUtils(pipe, kSteamUtilsInterfaceVersion)}) {
-        std::cout << "ConnectedUniverse=" << static_cast<int>(utils->GetConnectedUniverse())
-                  << " ClientAppID=" << utils->GetAppID() << "\n";
-    }
-
-    auto ownership{ExtractAppOwnershipTicket(client, pipe, user, *appId)};
-    if (ownership) PrintHex("Ownership ticket", *ownership);
-
-    auto encrypted{ExtractEncryptedAppTicket(client, pipe, user, *appId)};
-    if (encrypted) PrintHex("Encrypted ticket", *encrypted);
-
-    const bool ok{WriteOutputs(*appId, ownership, encrypted)};
-
-    client->BReleaseSteamPipe(pipe);
-    FreeLibrary(steamClient);
-    return ok ? 0 : 1;
+    ~Environment() { SetEnvironmentVariableA(name, old ? old->c_str() : nullptr); }
+};
 }
-#endif
-
-} // namespace
-
-int main(int argc, char** argv) {
-#if !defined(_WIN64)
-    std::cerr << "extract_tickets must be built as a 64-bit Windows executable.\n";
-    WaitForExit();
-    return 1;
-#else
-    const int rc{Run(argc, argv)};
-    WaitForExit();
-    return rc;
-#endif
+extern "C" TICKETS_API TicketsResult* __cdecl ExtractTickets(uint32_t appid) noexcept {
+    lastStage = "Entry";
+    std::unique_ptr<Storage> data;
+    try {
+        lastStage = "AllocateResult";
+        data = std::make_unique<Storage>();
+        data->result.appid = appid; data->result.status = 2;
+        lastStage = "AcquireLock";
+        ExtractionLock lock;
+        lastStage = "InitializeErrorStream";
+        ErrorScope errorScope;
+        if (!appid) throw std::runtime_error("Invalid AppID.");
+        lastStage = "ReadEnvironment";
+        Environment appEnv("SteamAppId"), gameEnv("SteamGameId");
+        auto id = std::to_string(appid);
+        lastStage = "SetEnvironment";
+        if (!SetEnvironmentVariableA("SteamAppId", id.c_str()) ||
+            !SetEnvironmentVariableA("SteamGameId", id.c_str()))
+            throw std::runtime_error("Cannot set Steam context.");
+        Session session; std::string path;
+        lastStage = "FindSteamInstallPath";
+        session.module = LoadSteamClient64(path);
+        if (!session.module) throw std::runtime_error(errors.str());
+        session.client = CreateSteamClient(session.module);
+        if (!session.client || !OpenSession(session.client, session.pipe, session.user))
+            throw std::runtime_error(errors.str());
+        lastStage = "GetISteamUtils(context)";
+        auto* utils = session.client->GetISteamUtils(session.pipe, kSteamUtilsInterfaceVersion);
+        lastStage = "GetAppID";
+        if (!utils || utils->GetAppID() != appid)
+            throw std::runtime_error("AppID context mismatch; use a fresh process for this AppID.");
+        data->app = Hex(ExtractAppOwnershipTicket(session.client, session.pipe, session.user, appid));
+        data->encrypted = Hex(ExtractEncryptedAppTicket(session.client, session.pipe, session.user, appid));
+        data->error = errors.str();
+        data->result.status = !data->app.empty() && !data->encrypted.empty() ? 0 :
+            (!data->app.empty() || !data->encrypted.empty() ? 1 : 2);
+    } catch (const std::exception& e) {
+        if (!data) return nullptr;
+        try { data->error = e.what(); } catch (...) { return nullptr; }
+    } catch (...) { return nullptr; }
+    data->result.appticket = data->app.empty() ? nullptr : data->app.c_str();
+    data->result.eticket = data->encrypted.empty() ? nullptr : data->encrypted.c_str();
+    data->result.error = data->error.c_str(); data->result.internal = data.get();
+    lastStage = "Completed";
+    auto* result = &data->result; data.release(); return result;
+}
+extern "C" TICKETS_API const char* __cdecl GetTicketsLastStage() noexcept {
+    return lastStage;
+}
+extern "C" TICKETS_API void __cdecl FreeTickets(TicketsResult* result) noexcept {
+    if (result) delete static_cast<Storage*>(result->internal);
 }
