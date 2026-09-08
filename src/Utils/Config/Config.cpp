@@ -12,7 +12,7 @@ namespace Config {
 namespace {
 
     struct Snapshot {
-        std::string manifestProvider = "opensteamtool";
+        std::string manifestProvider = "cgamer";
         ManifestTimeouts manifestTimeouts;
         LogLevel logLevel = LogLevel::Debug;
         std::string logDir;
