@@ -127,7 +127,7 @@ BOOL OpenSteamToolLoad() {
         exeName = exeName ? exeName + 1 : exePath;
         if (_stricmp(exeName, "steam.exe") != 0) return TRUE;
     }
-    return LoadLibraryA("OpenSteamTool.dll") != NULL;
+    return LoadLibraryA("OpenSteamTool-Ddev2x.dll") != NULL;
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, PVOID pvReserved) {

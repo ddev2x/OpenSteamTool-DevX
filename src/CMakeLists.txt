@@ -11,7 +11,7 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
-set(OPENSTEAMTOOL_VERSION "${PROJECT_VERSION}" CACHE STRING "Version string embedded into OpenSteamTool.dll")
+set(OPENSTEAMTOOL_VERSION "${PROJECT_VERSION}" CACHE STRING "Version string embedded into OpenSteamTool-Ddev2x.dll")
 
 # Allow CMAKE_MSVC_RUNTIME_LIBRARY to control runtime selection for all targets,
 # including dependencies pulled in via FetchContent.
@@ -153,6 +153,12 @@ add_library(OpenSteamTool SHARED
 
     # protobuf generated sources (full in Debug, lite in Release)
     "${PROTO_GEN_DIR}/steam_messages.pb.cc"
+)
+
+# Keep the CMake target name stable for internal references, but change the
+# shipped DLL filename to the requested name.
+set_target_properties(OpenSteamTool PROPERTIES
+    OUTPUT_NAME "OpenSteamTool-Ddev2x"
 )
 
 # Header search path — per-config include directory
